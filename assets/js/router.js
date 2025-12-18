@@ -358,6 +358,9 @@ function renderRouteList() {
    Координаты / bbox
 ------------------------------------------------------ */
 
+const LAT_MIN = 40;
+const LAT_MAX = 82;
+
 function normalizeCoordPairRoute(pair) {
   if (!Array.isArray(pair) || pair.length < 2) return null;
 
@@ -365,10 +368,50 @@ function normalizeCoordPairRoute(pair) {
   const b = Number(pair[1]);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
 
-  if (Math.abs(a) > 90 && Math.abs(b) <= 90) return [a, b];
-  if (Math.abs(b) > 90 && Math.abs(a) <= 90) return [b, a];
+  return [a, b];
+}
 
-  return [b, a];
+function scoreRouteOrder(points) {
+  let latLonScore = 0; // [lat, lon]
+  let lonLatScore = 0; // [lon, lat]
+
+  for (const [a, b] of points) {
+    const aAbs = Math.abs(a);
+    const bAbs = Math.abs(b);
+
+    // Однозначные случаи
+    if (aAbs <= 90 && bAbs > 90) { latLonScore += 3; continue; }
+    if (bAbs <= 90 && aAbs > 90) { lonLatScore += 3; continue; }
+
+    // РФ: долготы часто < 100, широты 40..82
+    const aLooksLat = a >= LAT_MIN && a <= LAT_MAX;
+    const bLooksLat = b >= LAT_MIN && b <= LAT_MAX;
+    const aLooksLongFar = aAbs >= 100;
+    const bLooksLongFar = bAbs >= 100;
+
+    if (aLooksLat && bLooksLongFar) latLonScore += 2;
+    if (bLooksLat && aLooksLongFar) lonLatScore += 2;
+
+    if (aLooksLat && !bLooksLat) latLonScore += 1;
+    if (bLooksLat && !aLooksLat) lonLatScore += 1;
+  }
+
+  return { latLonScore, lonLatScore };
+}
+
+function normalizeRoutePointsToLonLat(rawPoints) {
+  const cleaned = [];
+  (rawPoints || []).forEach((p) => {
+    const norm = normalizeCoordPairRoute(p);
+    if (norm) cleaned.push(norm);
+  });
+
+  if (cleaned.length < 2) return [];
+
+  const { latLonScore, lonLatScore } = scoreRouteOrder(cleaned);
+  const treatAsLatLon = latLonScore > lonLatScore;
+
+  return treatAsLatLon ? cleaned.map(([a, b]) => [b, a]) : cleaned;
 }
 
 function bboxFromTwoPoints(p1, p2) {
@@ -518,7 +561,7 @@ function scheduleExactCountOnBlueLine(activeRoute, bboxHint) {
         return;
       }
 
-      const routeLonLat = rawPts.map(normalizeCoordPairRoute).filter(Boolean);
+      const routeLonLat = normalizeRoutePointsToLonLat(rawPts);
       if (routeLonLat.length < 2) {
         updateFramesOnRouteUI(null);
         return;
@@ -557,7 +600,10 @@ export function refreshFramesForActiveRoute() {
   try {
     const rawBBox = activeRoute.properties?.get?.('boundedBy');
     if (Array.isArray(rawBBox) && rawBBox.length >= 2) {
-      bbox = bboxFromTwoPoints(rawBBox[0], rawBBox[1]);
+      const normalizedBBoxPts = normalizeRoutePointsToLonLat(rawBBox);
+      if (normalizedBBoxPts.length >= 2) {
+        bbox = bboxFromTwoPoints(normalizedBBoxPts[0], normalizedBBoxPts[1]);
+      }
     }
   } catch {}
 
@@ -568,7 +614,7 @@ export function refreshFramesForActiveRoute() {
   if (framesSvc) {
     try {
       const rawPts = collectRouteGeometryPoints(activeRoute);
-      const normalizedRoutePoints = rawPts.map(normalizeCoordPairRoute).filter(Boolean);
+      const normalizedRoutePoints = normalizeRoutePointsToLonLat(rawPts);
       const truckParams = window.__TT_TRUCK_PARAMS || {};
       framesSvc.updateFramesForRoute(normalizedRoutePoints, truckParams);
     } catch (e) {
@@ -699,7 +745,7 @@ function snapshotRouteStatsMaybe(frame) {
   if (!activeRoute) return { framesCount: null, maxRisk: null, frameStillOnRoute: null };
 
   const rawPts = collectRouteGeometryPoints(activeRoute);
-  const routeLonLat = rawPts.map(normalizeCoordPairRoute).filter(Boolean);
+  const routeLonLat = normalizeRoutePointsToLonLat(rawPts);
   if (routeLonLat.length < 2) return { framesCount: null, maxRisk: null, frameStillOnRoute: null };
 
   const api = window.__TT_LAYERS;
