@@ -1,0 +1,456 @@
+<!-- file: /map/index.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trans-Time — Карта</title>
+
+  <!-- 🔐 CSP -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self';
+             base-uri 'self';
+             object-src 'none';
+             frame-ancestors 'self';
+             form-action 'self';
+             script-src 'self' 'unsafe-inline'
+                        https://api-maps.yandex.ru
+                        https://yastatic.net
+                        https://*.yastatic.net
+                        https://core-renderer-tiles.maps.yandex.net
+                        https://*.maps.yandex.net;
+             script-src-elem 'self' 'unsafe-inline'
+                        https://api-maps.yandex.ru
+                        https://yastatic.net
+                        https://*.yastatic.net
+                        https://core-renderer-tiles.maps.yandex.net
+                        https://*.maps.yandex.net;
+             style-src 'self' 'unsafe-inline' https://yastatic.net https://*.yastatic.net blob:;
+             style-src-elem 'self' 'unsafe-inline' https://yastatic.net https://*.yastatic.net blob:;
+             img-src 'self' data:
+                     https://yastatic.net https://*.yastatic.net
+                     https://yandex.ru https://*.yandex.ru
+                     https://*.yandex.net;
+             font-src 'self' https://yastatic.net https://*.yastatic.net data:;
+             connect-src 'self'
+                         https://api-maps.yandex.ru
+                         https://*.yandex.ru
+                         https://*.yandex.net
+                         https://*.yastatic.net
+                         https://core-renderer-tiles.maps.yandex.net
+                         https://*.maps.yandex.net;
+             frame-src https://yandex.ru https://api-maps.yandex.ru;
+             worker-src 'self' blob:;
+             manifest-src 'self';">
+
+  <style>
+    :root {
+      --bg: #0b0b0d;
+      --fg: #ececec;
+      --muted: #a0a0a0;
+      --accent: #4da3ff;
+      --surface: #111218;
+      --border: #262733;
+      --chip-bg: #181922;
+      --chip-border: #2b2c38;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+    }
+
+    #map {
+      width: 100%;
+      height: 100vh;
+      background: #050506;
+    }
+
+    .tt-panel {
+      position: absolute;
+      top: 76px;
+      right: 20px;
+      width: 320px;
+      max-width: 90vw;
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      color: var(--fg);
+      z-index: 500;
+      max-height: calc(100vh - 100px);
+      overflow-y: auto;
+      display: none; /* покажем из JS */
+    }
+
+    /* Шапка-перетаскивалка панели */
+    .tt-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: -8px -8px 8px -8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #181922;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .tt-panel-header-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+    }
+
+    .tt-panel-header-hint {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .tt-panel-header.dragging { cursor: grabbing; }
+
+    .tt-section { margin-bottom: 16px; }
+
+    .tt-veh {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tt-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--chip-border);
+      background: var(--chip-bg);
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .tt-chip input { display: none; }
+
+    .tt-chip.active,
+    .tt-chip input:checked ~ span {
+      background: rgba(77, 163, 255, 0.16);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .tt-field { margin: 8px 0; }
+
+    .tt-field label {
+      font-size: 12px;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .tt-input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #15161d;
+      color: var(--fg);
+      font-size: 14px;
+    }
+
+    .tt-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .tt-help {
+      margin-top: 6px;
+      font-size: 12px;
+      opacity: 0.75;
+      line-height: 1.3;
+      color: var(--muted);
+    }
+
+    .tt-btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #4da3ff, #6bb8ff);
+      color: #081018;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    .tt-btn:disabled {
+      background: #262836;
+      color: #777;
+      cursor: not-allowed;
+    }
+
+    .tt-btn.tt-btn-secondary {
+      background: #181922;
+      color: var(--fg);
+      border: 1px solid var(--chip-border);
+      font-weight: 600;
+    }
+
+    .tt-btn.tt-btn-secondary:hover {
+      border-color: var(--accent);
+    }
+
+    .tt-btn.tt-btn-secondary:disabled {
+      opacity: 0.55;
+    }
+
+    .loader {
+      text-align: center;
+      padding: 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* Список альтернативных маршрутов */
+    .tt-route-list {
+      margin-top: 8px;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+
+    .tt-route-item {
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      background: #15161d;
+      border: 1px solid transparent;
+    }
+
+    .tt-route-item:hover { border-color: var(--accent); }
+
+    .tt-route-item.active {
+      border-color: var(--accent);
+      background: rgba(77, 163, 255, 0.12);
+    }
+
+    .tt-route-title {
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+
+    .tt-route-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ✅ Блок рамок */
+    .tt-frames-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 10px;
+      background: #15161d;
+      border: 1px solid var(--border);
+    }
+
+    .tt-frames-left {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .tt-frames-title {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .tt-frames-count {
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+
+    .tt-frames-status {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+
+    .tt-frames-right {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+
+    .tt-select {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #111218;
+      color: var(--fg);
+      font-size: 13px;
+      outline: none;
+    }
+
+    /* Скрытые legacy-контролы: оставляем в DOM, чтобы ничего не упало в старых модулях */
+    .tt-hidden-legacy {
+      position: absolute;
+      left: -99999px;
+      top: -99999px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Сообщение до загрузки карты -->
+  <div id="loader" class="loader">Загрузка карты...</div>
+
+  <!-- Контейнер карты -->
+  <div id="map" style="display: none;"></div>
+
+  <!-- Панель управления -->
+  <div class="tt-panel">
+    <div class="tt-panel-header">
+      <div class="tt-panel-header-title">Маршрут Trans-Time</div>
+      <div class="tt-panel-header-hint">Панель можно перетащить</div>
+    </div>
+
+    <!-- Маршрут -->
+    <div class="tt-section">
+      <div class="tt-field">
+        <label for="from">Откуда</label>
+        <input type="text" id="from" class="tt-input" placeholder="Адрес или город" autocomplete="off" />
+        <div class="tt-help">Начните вводить адрес или город</div>
+      </div>
+
+      <div class="tt-field">
+        <label for="to">Куда</label>
+        <input type="text" id="to" class="tt-input" placeholder="Адрес или город" autocomplete="off" />
+        <div class="tt-help">Выберите адрес из списка</div>
+      </div>
+
+      <button id="addStopBtn" class="tt-btn tt-btn-secondary" type="button" disabled>Добавить остановку</button>
+
+      <!-- Legacy: оставляем кнопку для старых модулей как fallback (скрыта) -->
+      <button id="buildBtn" class="tt-btn tt-hidden-legacy" type="button" disabled>Построить маршрут</button>
+    </div>
+
+    <!-- ❌ СЛУЖЕБНЫЙ БЛОК УБРАН ИЗ UX (оставлен в DOM как legacy, но полностью скрыт) -->
+    <div class="tt-section tt-hidden-legacy">
+      <div class="tt-frames-row">
+        <div class="tt-frames-left">
+          <div class="tt-frames-title">Рамки на маршруте</div>
+          <div class="tt-frames-count">
+            <span id="framesOnRouteCount">—</span>
+          </div>
+          <div class="tt-frames-status" id="framesOnRouteStatus">Ждём маршрут…</div>
+        </div>
+
+        <div class="tt-frames-right">
+          <label style="font-size:12px;color:var(--muted);">Коридор</label>
+          <select id="framesDistance" class="tt-select" title="Сколько метров от линии маршрута считать “на маршруте”">
+            <option value="50">≤ 50 м</option>
+            <option value="100">≤ 100 м</option>
+            <option value="150" selected>≤ 150 м</option>
+            <option value="300">≤ 300 м</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tt-help" style="margin-top:8px;">
+        Рамка попадает в список, если находится в выбранном радиусе от синей линии. В подсказке точки будет расстояние.
+      </div>
+    </div>
+
+    <!-- Тип транспорта -->
+    <div class="tt-section">
+      <div class="tt-veh">
+        <label class="tt-chip">
+          <input type="radio" name="veh" value="truck40" checked />
+          <span>Фура до 40 т</span>
+        </label>
+        <label class="tt-chip">
+          <input type="radio" name="veh" value="truck24" />
+          <span>Фура до 24 т</span>
+        </label>
+        <label class="tt-chip">
+          <input type="radio" name="veh" value="car" />
+          <span>Легковой</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Параметры транспорта -->
+    <div class="tt-section">
+      <details class="tt-details" open>
+        <summary>Параметры транспорта</summary>
+        <div>
+          <div class="tt-field">
+            <label>Вес, т</label>
+            <input type="number" id="truckWeight" class="tt-input" value="40" min="0" max="100" step="0.1">
+          </div>
+          <div class="tt-field">
+            <label>Высота, м</label>
+            <input type="number" id="truckHeight" class="tt-input" value="4.0" min="0" max="10" step="0.1">
+          </div>
+          <div class="tt-field">
+            <label>Ширина, м</label>
+            <input type="number" id="truckWidth" class="tt-input" value="2.55" min="0" max="5" step="0.01">
+          </div>
+          <div class="tt-field">
+            <label>Длина, м</label>
+            <input type="number" id="truckLength" class="tt-input" value="16" min="0" max="30" step="0.1">
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Избранные -->
+    <div class="tt-section">
+      <div class="tt-saved-title">Избранные</div>
+      <ul id="savedRoutesList" class="tt-saved-routes">
+        <!-- наполняется storage.js -->
+      </ul>
+    </div>
+
+    <!-- Варианты маршрута -->
+    <div class="tt-section">
+      <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">Варианты маршрута</div>
+      <div id="routeList" class="tt-route-list">
+        <!-- наполняется router.js -->
+      </div>
+    </div>
+
+    <!-- Legacy: оставляем флаг для router.js (пока он проверяет #toggle-frames).
+         UI-переключателя нет: рамки зависят от маршрута. -->
+    <div class="tt-hidden-legacy">
+      <input type="checkbox" id="toggle-frames" checked />
+    </div>
+  </div>
+
+  <!-- Модульная логика карты Trans-Time -->
+  <script type="module" src="./assets/js/boot.js"></script>
+</body>
+</html>

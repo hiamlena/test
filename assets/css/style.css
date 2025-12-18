@@ -1,0 +1,472 @@
+:root {
+  --bg: #0b0b0d;
+  --fg: #ececec;
+  --muted: #a0a0a0;
+
+  --btn: #f2f2f2;
+  --btnText: #111;
+
+  --accent: #4da3ff;
+  --accent-soft: rgba(77, 163, 255, 0.16);
+  --accent-shadow: rgba(77, 163, 255, 0.45);
+
+  --surface: #111218;
+  --surface-soft: #15161d;
+
+  --border: #262733;
+  --border-soft: #1b1c24;
+
+  --chip-bg: #181922;
+  --chip-border: #2b2c38;
+
+  --danger: #ef4444;
+}
+
+/* БАЗА */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Inter, Roboto, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: radial-gradient(1200px 800px at 20% -10%, #141418 0%, #0b0b0d 60%) fixed;
+}
+
+/* ШАПКА */
+
+.tt-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background: #050506;
+  color: var(--fg);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #101017;
+  position: relative;
+  z-index: 20;
+}
+
+/* МАКЕТ */
+
+.tt-layout {
+  display: flex;
+  height: calc(100vh - 56px);
+}
+
+/* ПАНЕЛЬ */
+
+.tt-panel {
+  width: 320px;
+  max-width: 100%;
+  padding: 18px 18px 18px;
+  background: var(--surface);
+  border-right: 1px solid #171822;
+  overflow-y: auto;
+  position: relative;
+  z-index: 15;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+}
+
+.tt-section {
+  margin-bottom: 16px;
+}
+
+.tt-saved-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.tt-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ЧИПЫ ТС */
+
+.tt-veh {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.tt-chip input {
+  display: none;
+}
+
+.tt-chip:hover {
+  border-color: var(--accent);
+}
+
+.tt-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.35);
+}
+
+/* ПОЛЯ */
+
+.tt-row {
+  display: flex;
+  gap: 10px;
+}
+
+.tt-row--mt {
+  margin-top: 8px;
+}
+
+.tt-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tt-input {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--fg);
+  font-size: 14px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+
+.tt-input--mt {
+  margin-top: 8px;
+}
+
+.tt-input::placeholder {
+  color: rgba(170, 170, 170, 0.95);
+}
+
+.tt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.4);
+}
+
+/* КНОПКИ */
+
+.tt-btn {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: #181922;
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.05s ease,
+    box-shadow 0.16s ease;
+}
+
+.tt-btn:hover {
+  background: #1c1e28;
+  border-color: var(--accent);
+}
+
+.tt-btn:active {
+  transform: translateY(1px);
+}
+
+.tt-btn-primary {
+  background: linear-gradient(135deg, #4da3ff 0%, #6bb8ff 100%);
+  color: #081018;
+  border-color: transparent;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 7px 22px var(--accent-shadow);
+}
+
+.tt-btn-primary:hover {
+  background: linear-gradient(135deg, #5badff 0%, #76c4ff 100%);
+}
+
+.tt-btn-primary:disabled {
+  background: #262836;
+  color: #777;
+  border-color: #262836;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.tt-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+.tt-actions-row .tt-btn {
+  flex: 1;
+  text-align: center;
+}
+
+/* DETAILS */
+
+.tt-details {
+  padding: 4px 0;
+}
+
+/* Текст заголовков — обычный светлый, без синевы */
+.tt-details > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 4px 0;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+/* Скрываем маркер и красим только стрелку в акцентный */
+.tt-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tt-details > summary::after {
+  content: " ▼";
+  font-size: 10px;
+  opacity: 0.9;
+  color: var(--accent);
+}
+
+.tt-details[open] > summary::after {
+  content: " ▲";
+}
+
+.tt-details > div {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* ТОГГЛЫ */
+
+.tt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.tt-toggle span {
+  flex: 1;
+}
+
+.tt-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* КАРТА */
+
+.tt-map-wrap {
+  flex: 1;
+  position: relative;
+  background: #050506;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* лёгкое затемнение карты, чтобы не слепила */
+.tt-map-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 20% 0, rgba(0, 0, 0, 0.25) 0, transparent 45%),
+    radial-gradient(circle at 80% 100%, rgba(0, 0, 0, 0.35) 0, transparent 55%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tt-map {
+  width: 100%;
+  height: 100%;
+}
+
+/* слои карты под UI */
+.tt-map-wrap .ymaps-2-1-79-map,
+.tt-map-wrap .ymaps-2-1-79-inner-panes,
+.tt-map-wrap .ymaps-2-1-79-ground-pane,
+.tt-map-wrap .ymaps-2-1-79-controls__toolbar,
+.tt-map-wrap .ymaps-2-1-79-controls__control {
+  z-index: 0 !important;
+}
+
+/* СПИСОК МАРШРУТОВ */
+
+#routeList {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(15, 16, 26, 0.96);
+  border-radius: 10px;
+  font-size: 13px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75);
+  border: 1px solid #1d1e2a;
+  z-index: 20;
+  max-height: 260px;
+  overflow-y: auto;
+  min-width: 200px;
+  padding: 8px 0;
+  margin: 0;
+  list-style: none;
+  color: var(--fg);
+}
+
+/* ЛЕГЕНДА */
+
+.tt-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(12, 13, 18, 0.96);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid #1d1e2a;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tt-legend-item {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+
+.legend-active {
+  background: var(--accent);
+}
+
+.legend-alt {
+  background: #ffb347;
+}
+
+.legend-frames {
+  background: #8b5cf6;
+}
+
+/* ТОСТ */
+
+.toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #111216;
+  color: var(--fg);
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  max-width: 90vw;
+  z-index: 2000;
+  display: none;
+  border: 1px solid #1d1e2a;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.7);
+}
+
+/* ИЗБРАННЫЕ */
+
+.tt-saved-routes {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.tt-saved-routes li {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tt-saved-routes li:last-child {
+  border-bottom: none;
+}
+
+.tt-saved-routes button {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tt-saved-routes button.delete {
+  background: var(--danger);
+}
+
+/* АДАПТИВ */
+
+@media (max-width: 768px) {
+  .tt-layout {
+    flex-direction: column;
+  }
+
+  .tt-panel {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #171822;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  }
+
+  #routeList {
+    top: 8px;
+    right: 8px;
+  }
+
+  .tt-legend {
+    bottom: 8px;
+    left: 8px;
+  }
+}
