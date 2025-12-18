@@ -8,6 +8,8 @@ const HAS_DOC = typeof document !== 'undefined';
 
 const _geojsonCache = new Map();
 
+const DEFAULT_CORRIDOR_METERS = 50;
+
 async function fetchGeoJSON(url) {
   try {
     const res = await fetch(url, { cache: 'no-cache' });
@@ -29,9 +31,6 @@ async function fetchGeoJSON(url) {
   }
 }
 
-/**
- * Однократная загрузка GeoJSON по URL (с кэшированием промиса).
- */
 async function loadGeoJSONOnce(url) {
   if (!url) return null;
 
@@ -47,10 +46,6 @@ async function loadGeoJSONOnce(url) {
   return promise;
 }
 
-/**
- * Нормализация пары координат.
- * Тут ОЖИДАЕМ [lon, lat] (потому что в твоём GeoJSON именно так).
- */
 function normalizeCoordPair(pair) {
   if (!pair || !Array.isArray(pair) || pair.length < 2) return null;
   const lon = Number(pair[0]);
@@ -59,9 +54,16 @@ function normalizeCoordPair(pair) {
   return [lon, lat];
 }
 
-/**
- * BBOX вокруг маршрута с паддингом (в км).
- */
+function normalizeRoutePoints(routePoints) {
+  if (!Array.isArray(routePoints) || routePoints.length < 2) return [];
+  const out = [];
+  for (const p of routePoints) {
+    const norm = normalizeCoordPair(p);
+    if (norm) out.push(norm);
+  }
+  return out.length >= 2 ? out : [];
+}
+
 function bboxFromRoutePointsWithPadding(routePoints, paddingKm = 5) {
   if (!Array.isArray(routePoints) || !routePoints.length) return null;
 
@@ -99,40 +101,104 @@ function bboxFromRoutePointsWithPadding(routePoints, paddingKm = 5) {
   };
 }
 
-function isPointInBBoxObject(coords, bboxObj) {
-  if (!bboxObj) return true;
-  const pair = normalizeCoordPair(coords);
-  if (!pair) return false;
-  const [lon, lat] = pair;
-  const { minLon, maxLon, minLat, maxLat } = bboxObj;
-  return lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat;
+function toXYMeters(lon, lat, refLatRad) {
+  const R = 6371000;
+  const x = (lon * Math.PI / 180) * R * Math.cos(refLatRad);
+  const y = (lat * Math.PI / 180) * R;
+  return [x, y];
 }
 
-/**
- * Инициализация сервиса рамок.
- * options.framesUrl можно передать, но по умолчанию — статический GeoJSON.
- */
+function distPointToSegmentMeters(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+
+  const ab2 = abx * abx + aby * aby;
+  if (ab2 <= 1e-9) {
+    const dx = px - ax;
+    const dy = py - ay;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  let t = (apx * abx + apy * aby) / ab2;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+
+  const cx = ax + t * abx;
+  const cy = ay + t * aby;
+
+  const dx = px - cx;
+  const dy = py - cy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function distancePointToPolylineMeters(pointLonLat, routeLonLat) {
+  if (!Array.isArray(routeLonLat) || routeLonLat.length < 2) return Infinity;
+  const lon = Number(pointLonLat?.[0]);
+  const lat = Number(pointLonLat?.[1]);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return Infinity;
+
+  const refLat = Number(routeLonLat[Math.floor(routeLonLat.length / 2)]?.[1]) || lat;
+  const refLatRad = (refLat * Math.PI) / 180;
+
+  const [px, py] = toXYMeters(lon, lat, refLatRad);
+
+  let best = Infinity;
+  for (let i = 0; i < routeLonLat.length - 1; i++) {
+    const a = routeLonLat[i];
+    const b = routeLonLat[i + 1];
+
+    const alon = Number(a?.[0]), alat = Number(a?.[1]);
+    const blon = Number(b?.[0]), blat = Number(b?.[1]);
+    if (![alon, alat, blon, blat].every(Number.isFinite)) continue;
+
+    const [ax, ay] = toXYMeters(alon, alat, refLatRad);
+    const [bx, by] = toXYMeters(blon, blat, refLatRad);
+
+    const d = distPointToSegmentMeters(px, py, ax, ay, bx, by);
+    if (d < best) best = d;
+    if (best <= 1) break;
+  }
+  return best;
+}
+
+function collectFramePointLonLat(feature) {
+  const g = feature?.geometry;
+  if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) return null;
+  return normalizeCoordPair(g.coordinates);
+}
+
+function computeMaxRisk(frames) {
+  if (!Array.isArray(frames) || !frames.length) return null;
+  let m = -Infinity;
+  for (const f of frames) {
+    const v = Number(f?.properties?.risk ?? f?.risk);
+    if (Number.isFinite(v)) m = Math.max(m, v);
+  }
+  return m === -Infinity ? null : m;
+}
+
 export async function initFramesService(map, options = {}) {
   const state = {
     map: map || null,
     framesData: { type: 'FeatureCollection', features: [] },
-    framesUrl: null
+    framesUrl: null,
+    framesLoaded: false,
+    lastRouteFrames: [],
+    lastRouteStats: { count: null, maxRisk: null }
   };
 
   if (!HAS_DOC || !HAS_WINDOW) {
     console.warn('[TT][frames-service] Нет window/DOM, сервис рамок будет пустым');
     return {
       state,
-      updateFramesForRoute: () => ({
-        state,
-        bbox: null,
-        frames: [],
-        criticalFrames: []
-      })
+      updateFramesForRoute: () => ({ state, bbox: null, frames: [], criticalFrames: [], stats: state.lastRouteStats }),
+      getFramesOnRoute: () => state.lastRouteFrames,
+      getRouteStats: () => state.lastRouteStats
     };
   }
 
-  // ✅ главный фикс: дефолт теперь статический файл
   const FRAMES_URL_DEFAULT = '/map/data/frames_ready.geojson';
   const framesUrl = options?.framesUrl || FRAMES_URL_DEFAULT;
   state.framesUrl = framesUrl;
@@ -140,6 +206,7 @@ export async function initFramesService(map, options = {}) {
   try {
     const framesData = await loadGeoJSONOnce(framesUrl);
     state.framesData = framesData || { type: 'FeatureCollection', features: [] };
+    state.framesLoaded = !!framesData;
     console.log('[TT][frames-service] Рамок загружено:', state.framesData.features.length, 'из', framesUrl);
   } catch (e) {
     console.warn('[TT][frames-service] Ошибка при загрузке рамок:', e);
@@ -147,33 +214,49 @@ export async function initFramesService(map, options = {}) {
   }
 
   function updateFramesForRoute(routePoints, truckParams = {}) {
-    const framesData = state.framesData;
+    const normalizedRoute = normalizeRoutePoints(routePoints);
 
-    if (!framesData || !Array.isArray(framesData.features) || !routePoints || !routePoints.length) {
-      return { state, bbox: null, frames: [], criticalFrames: [] };
+    if (!state.framesLoaded || !normalizedRoute.length) {
+      state.lastRouteFrames = [];
+      state.lastRouteStats = { count: null, maxRisk: null };
+      return { state, bbox: null, frames: [], criticalFrames: [], stats: state.lastRouteStats, truckParams };
     }
 
-    const bboxObj = bboxFromRoutePointsWithPadding(routePoints, 5);
-    if (!bboxObj) {
-      return { state, bbox: null, frames: [], criticalFrames: [] };
-    }
+    const bboxObj = bboxFromRoutePointsWithPadding(normalizedRoute, 5);
 
-    const framesInCorridor = framesData.features.filter((f) => {
+    const framesInCorridor = state.framesData.features.filter((f) => {
       if (!f || !f.geometry || f.geometry.type !== 'Point') return false;
-      return isPointInBBoxObject(f.geometry.coordinates, bboxObj);
+      const pt = collectFramePointLonLat(f);
+      if (!pt) return false;
+      const d = distancePointToPolylineMeters(pt, normalizedRoute);
+      return d <= DEFAULT_CORRIDOR_METERS;
     });
 
-    // Пока считаем "критичными" все, что попали в коридор (как у тебя было)
     const criticalFrames = framesInCorridor.slice();
 
-    const bbox = [
-      [bboxObj.minLon, bboxObj.minLat],
-      [bboxObj.maxLon, bboxObj.maxLat]
-    ];
+    const bbox = bboxObj
+      ? [
+          [bboxObj.minLon, bboxObj.minLat],
+          [bboxObj.maxLon, bboxObj.maxLat]
+        ]
+      : null;
 
-    return { state, bbox, frames: framesInCorridor, criticalFrames };
+    const stats = { count: framesInCorridor.length, maxRisk: computeMaxRisk(framesInCorridor) };
+
+    state.lastRouteFrames = framesInCorridor;
+    state.lastRouteStats = stats;
+
+    return { state, bbox, frames: framesInCorridor, criticalFrames, stats, truckParams };
+  }
+
+  function getFramesOnRoute() {
+    return state.lastRouteFrames;
+  }
+
+  function getRouteStats() {
+    return state.lastRouteStats;
   }
 
   console.log('[TT][frames-service] Сервис рамок инициализирован, framesUrl:', framesUrl);
-  return { state, updateFramesForRoute };
+  return { state, updateFramesForRoute, getFramesOnRoute, getRouteStats };
 }

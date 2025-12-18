@@ -22,13 +22,15 @@ if (HAS_WINDOW) {
 let framesManager = null;
 let framesVisible = false;
 
-// route filter
-let framesRouteLonLat = null; // [[lon,lat],...]
-let framesRouteMeters = 150;
+let framesRouteLonLat = null;
+let framesRouteMeters = 50;
 
 let framesData = null;
 let framesLoadingPromise = null;
 let framesAddedToManager = false;
+
+let framesReadyResolver = null;
+const framesReadyPromise = new Promise((resolve) => { framesReadyResolver = resolve; });
 
 const FRAMES_GEOJSON_URL = '/map/data/frames_ready.geojson';
 
@@ -66,16 +68,9 @@ function normalizeCoordPair(pair) {
   const b = Number(pair[1]);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
 
-  // эвристика lon/lat:
-  if (Math.abs(a) > 90 && Math.abs(b) <= 90) return [a, b];
-  if (Math.abs(b) > 90 && Math.abs(a) <= 90) return [b, a];
-
-  // если оба < 90 (типично для СПб/Мск) — не угадаем, оставим как есть
   return [a, b];
 }
 
-// ✅ нормализация маршрута: приводим к [[lon,lat],...]
-// В Яндекс.Картах маршрут очень часто приходит как [lat,lon]. В РФ это почти всегда:
 function normalizeRouteToLonLat(route) {
   if (!Array.isArray(route) || route.length < 2) return null;
 
@@ -87,32 +82,7 @@ function normalizeRouteToLonLat(route) {
     const b = Number(p[1]);
     if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
 
-    // heuristic ranges for Russia-ish:
-    // lat ~ 35..82, lon ~ 20..180
-    const aLooksLikeLat = a >= 0 && a <= 90;
-    const bLooksLikeLat = b >= 0 && b <= 90;
-
-    // Если a похож на широту (lat), а b на долготу (lon) — значит это [lat,lon] -> swap
-    // Пример СПб: [59.93, 30.31]
-    if (aLooksLikeLat && bLooksLikeLat) {
-      // оба <= 90 (СПб/Мск): предполагаем, что это [lat,lon] (это дефолт Яндекса)
-      out.push([b, a]);
-      continue;
-    }
-
-    // Если a может быть lon (>90), а b lat — это уже lon/lat
-    if (Math.abs(a) > 90 && Math.abs(b) <= 90) {
-      out.push([a, b]);
-      continue;
-    }
-    if (Math.abs(b) > 90 && Math.abs(a) <= 90) {
-      // это [lat,lon]
-      out.push([b, a]);
-      continue;
-    }
-
-    // fallback
-    out.push([b, a]);
+    out.push([a, b]);
   }
 
   return out.length >= 2 ? out : null;
@@ -487,7 +457,10 @@ async function ensureFramesLoadedAndAdded() {
   if (!manager) return false;
 
   const data = framesData || (await loadFramesGeoJSON());
-  if (!data) return false;
+  if (!data) {
+    framesReadyResolver?.();
+    return false;
+  }
 
   if (data && Array.isArray(data.features)) {
     for (const f of data.features) {
@@ -501,12 +474,15 @@ async function ensureFramesLoadedAndAdded() {
     try {
       manager.add(data);
       framesAddedToManager = true;
+      framesReadyResolver?.();
       console.log('[TT][layers] Рамки добавлены в ObjectManager:', data.features.length);
     } catch (e) {
       console.warn('[TT][layers] Не удалось добавить рамки в ObjectManager:', e);
       return false;
     }
   }
+
+  framesReadyResolver?.();
 
   return true;
 }
@@ -681,14 +657,10 @@ async function internalApplyFramesFilter() {
   manager.setFilter((obj) => {
     if (!framesVisible) return false;
 
-    // ✅ без маршрута рамки не показываем вообще
     if (!useRoute) {
       applyDynamicProps(obj, null);
       return false;
     }
-
-    const g = obj && obj.geometry;
-    if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) return false;
 
     const pt = collectFramePointLonLat(obj);
     if (!pt) return false;
@@ -720,20 +692,17 @@ async function internalSetOfficialVisible(visible) {
 if (HAS_WINDOW) {
   const api = (window.__TT_LAYERS = window.__TT_LAYERS || {});
 
-  // Frames API
   api.setFramesVisible = function setFramesVisible(visible) {
     framesVisible = !!visible;
     internalApplyFramesFilter().catch((e) => console.warn('[TT][layers] setFramesVisible error:', e));
   };
 
   api.setFramesRoute = function setFramesRoute(routeCoords, meters = 150) {
-    // ✅ FIX: нормализуем маршрут в lon/lat
     const normRoute = normalizeRouteToLonLat(routeCoords);
 
     framesRouteLonLat = normRoute;
     framesRouteMeters = Math.max(10, Number(meters) || 150);
 
-    // route-only: если маршрут невалидный — просто скрываем рамки
     framesVisible = !!(framesRouteLonLat && framesRouteLonLat.length >= 2);
 
     internalApplyFramesFilter().catch((e) => console.warn('[TT][layers] setFramesRoute error:', e));
@@ -746,10 +715,10 @@ if (HAS_WINDOW) {
   };
 
   api.countFramesOnRoute = function apiCountFramesOnRoute(routeCoords, meters = 150) {
-    if (!framesData || !Array.isArray(framesData.features)) return { count: 0, ids: [] };
+    if (!framesData || !Array.isArray(framesData.features)) return { count: null, ids: [] };
 
     const routeLonLat = normalizeRouteToLonLat(routeCoords);
-    if (!routeLonLat || routeLonLat.length < 2) return { count: 0, ids: [] };
+    if (!routeLonLat || routeLonLat.length < 2) return { count: null, ids: [] };
 
     const ids = [];
     const radius = Math.max(10, Number(meters) || 150);
@@ -765,12 +734,14 @@ if (HAS_WINDOW) {
     return { count: ids.length, ids };
   };
 
-  // Official API (UI-toggle убрали, но через консоль/код включать можно)
+  api.waitForFramesReady = function waitForFramesReady() {
+    return framesReadyPromise;
+  };
+
   api.setOfficialVisible = function setOfficialVisible(visible) {
     internalSetOfficialVisible(visible).catch((e) => console.warn('[TT][layers] setOfficialVisible error:', e));
   };
 
-  // preload
   ensureFramesLoadedAndAdded().catch(() => {});
   loadOfficialGeoJSON().catch(() => {});
 

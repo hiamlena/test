@@ -15,9 +15,11 @@ let _countTimer = null;
 ------------------------------------------------------ */
 const detourState = {
   busy: false,
-  originalViaPoints: null,  // снимок viaPoints до первой попытки
+  originalViaPoints: null,
   lastFrameId: null
 };
+
+const ROUTE_ORDER_KEY = '__ttCoordOrder';
 
 /* ------------------------------------------------------
    Получение карты
@@ -180,11 +182,21 @@ export async function buildRouteWithState(options = {}) {
     const vehRadio = document.querySelector('input[name=veh]:checked');
     const vehMode = vehRadio ? vehRadio.value : 'truck40';
 
+    const truckParams = window.__TT_TRUCK_PARAMS || {};
+    const isTruck = vehMode !== 'car';
+
     const params = {
       results: options.results || 3,
       avoidTrafficJams: options.avoidTrafficJams !== false,
-      routingMode: 'auto'
+      routingMode: isTruck ? 'truck' : 'auto'
     };
+
+    if (isTruck) {
+      if (truckParams.weight) params.truckWeight = truckParams.weight;
+      if (truckParams.height) params.truckHeight = truckParams.height;
+      if (truckParams.width)  params.truckWidth  = truckParams.width;
+      if (truckParams.length) params.truckLength = truckParams.length;
+    }
 
     multiRoute = new ymaps.multiRouter.MultiRoute(
       { referencePoints: refPoints, params },
@@ -206,19 +218,16 @@ export async function buildRouteWithState(options = {}) {
       window.routes.vehMode = vehMode;
     }
 
-    // requestsuccess/requestfail
     try {
       const model = multiRoute.model;
       if (model && model.events && typeof model.events.add === 'function') {
         model.events.add('requestsuccess', () => {
-          console.log('[TT][router] requestsuccess: обновляем рамки и список маршрутов');
           refreshFramesForActiveRoute();
           renderRouteList();
           window.dispatchEvent(new CustomEvent('tt_router_route_updated'));
         });
 
         model.events.add('requestfail', (e) => {
-          console.warn('[TT][router] requestfail:', e);
           window.dispatchEvent(new CustomEvent('tt_router_route_failed', { detail: e }));
         });
       }
@@ -247,7 +256,6 @@ export async function buildRouteWithState(options = {}) {
     if (hasWindow) {
       setTimeout(() => {
         try {
-          console.log('[TT][router] post-build timeout: обновляем рамки (страховка)');
           refreshFramesForActiveRoute();
           renderRouteList();
         } catch {}
@@ -315,7 +323,7 @@ function renderRouteList() {
   const len = routes.getLength();
   if (!len) {
     container.textContent = 'Маршруты не найдены';
-    updateFramesOnRouteUI(0);
+    updateFramesOnRouteUI(null);
     return;
   }
 
@@ -372,18 +380,16 @@ function normalizeCoordPairRoute(pair) {
 }
 
 function scoreRouteOrder(points) {
-  let latLonScore = 0; // [lat, lon]
-  let lonLatScore = 0; // [lon, lat]
+  let latLonScore = 0;
+  let lonLatScore = 0;
 
   for (const [a, b] of points) {
     const aAbs = Math.abs(a);
     const bAbs = Math.abs(b);
 
-    // Однозначные случаи
     if (aAbs <= 90 && bAbs > 90) { latLonScore += 3; continue; }
     if (bAbs <= 90 && aAbs > 90) { lonLatScore += 3; continue; }
 
-    // РФ: долготы часто < 100, широты 40..82
     const aLooksLat = a >= LAT_MIN && a <= LAT_MAX;
     const bLooksLat = b >= LAT_MIN && b <= LAT_MAX;
     const aLooksLongFar = aAbs >= 100;
@@ -399,19 +405,59 @@ function scoreRouteOrder(points) {
   return { latLonScore, lonLatScore };
 }
 
-function normalizeRoutePointsToLonLat(rawPoints) {
+function pickCoordOrderFromMeta() {
+  try {
+    const meta = ymaps?.meta;
+    const direct = meta && meta.coordinatesOrder;
+    if (direct === 'longlat' || direct === 'lonlat') return 'lonlat';
+    if (direct === 'latlong') return 'latlon';
+
+    const metaGetter = typeof meta?.get === 'function' ? meta.get('coordorder') : null;
+    if (metaGetter === 'longlat' || metaGetter === 'lonlat') return 'lonlat';
+    if (metaGetter === 'latlong') return 'latlon';
+  } catch {}
+  return null;
+}
+
+function decideRouteOrder(rawPoints) {
+  const metaOrder = pickCoordOrderFromMeta();
+  if (metaOrder) return metaOrder;
+
+  const { latLonScore, lonLatScore } = scoreRouteOrder(rawPoints);
+  return latLonScore > lonLatScore ? 'latlon' : 'lonlat';
+}
+
+function normalizeRouteWithOrder(rawPoints, order) {
+  if (!Array.isArray(rawPoints) || rawPoints.length < 2) return [];
+
   const cleaned = [];
-  (rawPoints || []).forEach((p) => {
+  rawPoints.forEach((p) => {
     const norm = normalizeCoordPairRoute(p);
     if (norm) cleaned.push(norm);
   });
 
   if (cleaned.length < 2) return [];
 
-  const { latLonScore, lonLatScore } = scoreRouteOrder(cleaned);
-  const treatAsLatLon = latLonScore > lonLatScore;
+  const useOrder = order || decideRouteOrder(cleaned);
+  const swapped = useOrder === 'latlon';
 
-  return treatAsLatLon ? cleaned.map(([a, b]) => [b, a]) : cleaned;
+  return swapped ? cleaned.map(([a, b]) => [b, a]) : cleaned.map(([a, b]) => [a, b]);
+}
+
+function ensureRouteOrderCached(route, rawPoints) {
+  if (!route || !Array.isArray(rawPoints) || rawPoints.length < 2) return null;
+  if (route[ROUTE_ORDER_KEY]) return route[ROUTE_ORDER_KEY];
+  const order = decideRouteOrder(rawPoints);
+  route[ROUTE_ORDER_KEY] = order;
+  return order;
+}
+
+function getNormalizedRoutePoints(route) {
+  const rawPts = collectRouteGeometryPoints(route);
+  if (!rawPts || rawPts.length < 2) return { points: [], order: null };
+  const order = ensureRouteOrderCached(route, rawPts) || decideRouteOrder(rawPts);
+  const points = normalizeRouteWithOrder(rawPts, order);
+  return { points, order };
 }
 
 function bboxFromTwoPoints(p1, p2) {
@@ -537,7 +583,7 @@ function applyFramesOnRoute(routeLonLat, meters) {
 /* ------------------------------------------------------
    ✅ ТОЧНЫЙ подсчёт + показ рамок "по синей линии"
 ------------------------------------------------------ */
-function scheduleExactCountOnBlueLine(activeRoute, bboxHint) {
+function scheduleExactCountOnBlueLine(activeRoute) {
   if (!hasWindow) return;
   const api = window.__TT_LAYERS;
   if (!api?.countFramesOnRoute) return;
@@ -546,25 +592,31 @@ function scheduleExactCountOnBlueLine(activeRoute, bboxHint) {
   const METERS = 50;
 
   if (_countTimer) clearTimeout(_countTimer);
+  updateFramesOnRouteUI(null);
 
   _countTimer = setTimeout(() => {
     let tries = 0;
 
-    const tick = () => {
+    const tick = async () => {
       tries++;
 
       const rawPts = collectRouteGeometryPoints(activeRoute);
       if (!rawPts || rawPts.length < 2) {
         if (tries <= 80) return setTimeout(tick, 250);
-        console.info('[TT][router] Геометрия маршрута не появилась после ожидания.');
         updateFramesOnRouteUI(null);
         return;
       }
 
-      const routeLonLat = normalizeRoutePointsToLonLat(rawPts);
+      const order = ensureRouteOrderCached(activeRoute, rawPts) || decideRouteOrder(rawPts);
+      const routeLonLat = normalizeRouteWithOrder(rawPts, order);
       if (routeLonLat.length < 2) {
         updateFramesOnRouteUI(null);
         return;
+      }
+
+      const framesReady = api.waitForFramesReady?.();
+      if (framesReady && typeof framesReady.then === 'function') {
+        try { await framesReady; } catch {}
       }
 
       const bboxByGeom = bboxFromPointsLonLat(routeLonLat);
@@ -574,10 +626,22 @@ function scheduleExactCountOnBlueLine(activeRoute, bboxHint) {
 
       const r = api.countFramesOnRoute(routeLonLat, METERS);
 
-      updateFramesOnRouteUI(r.count);
+      const count = Number.isFinite(r.count) ? r.count : null;
+      updateFramesOnRouteUI(count);
 
-      toast?.(`Рамок на маршруте: ${r.count}`, 5000);
-      console.log('[TT][router] Frames ON ROUTE:', r.count, '| meters=', METERS, '| ids=', r.ids, '| bboxHint=', bboxHint);
+      if (Number.isFinite(count)) toast?.(`Рамок на маршруте: ${count}`, 5000);
+
+      const framesSvc = getFramesService();
+      if (framesSvc) {
+        try {
+          const truckParams = window.__TT_TRUCK_PARAMS || {};
+          framesSvc.updateFramesForRoute(routeLonLat, truckParams);
+        } catch (e) {
+          console.warn('[TT][router] Ошибка frames-service:', e);
+        }
+      }
+
+      console.log('[TT][router] Frames ON ROUTE:', count, '| meters=', METERS, '| ids=', r.ids);
     };
 
     tick();
@@ -588,33 +652,47 @@ function scheduleExactCountOnBlueLine(activeRoute, bboxHint) {
    Обновление рамок
 ------------------------------------------------------ */
 export function refreshFramesForActiveRoute() {
-  if (isCarMode()) return;
+  if (_countTimer) {
+    clearTimeout(_countTimer);
+    _countTimer = null;
+  }
+
+  const api = window.__TT_LAYERS;
+
+  if (isCarMode()) {
+    api?.setFramesVisible?.(false);
+    updateFramesOnRouteUI(null);
+    return;
+  }
 
   const framesToggle = $('#toggle-frames');
-  if (framesToggle && framesToggle.checked === false) return;
+  if (framesToggle && framesToggle.checked === false) {
+    api?.setFramesVisible?.(false);
+    updateFramesOnRouteUI(null);
+    return;
+  }
 
   const activeRoute = multiRoute?.getActiveRoute?.();
-  if (!activeRoute) return;
+  if (!activeRoute) {
+    api?.setFramesVisible?.(false);
+    updateFramesOnRouteUI(null);
+    return;
+  }
 
-  let bbox = null;
-  try {
-    const rawBBox = activeRoute.properties?.get?.('boundedBy');
-    if (Array.isArray(rawBBox) && rawBBox.length >= 2) {
-      const normalizedBBoxPts = normalizeRoutePointsToLonLat(rawBBox);
-      if (normalizedBBoxPts.length >= 2) {
-        bbox = bboxFromTwoPoints(normalizedBBoxPts[0], normalizedBBoxPts[1]);
-      }
-    }
-  } catch {}
+  const { points: normalizedRoutePoints } = getNormalizedRoutePoints(activeRoute);
+  if (!normalizedRoutePoints.length) {
+    api?.setFramesVisible?.(false);
+    updateFramesOnRouteUI(null);
+    return;
+  }
 
-  applyFramesBBox(bbox);
-  scheduleExactCountOnBlueLine(activeRoute, bbox);
+  const bboxByGeom = bboxFromPointsLonLat(normalizedRoutePoints);
+  applyFramesBBox(bboxByGeom);
+  scheduleExactCountOnBlueLine(activeRoute);
 
   const framesSvc = getFramesService();
   if (framesSvc) {
     try {
-      const rawPts = collectRouteGeometryPoints(activeRoute);
-      const normalizedRoutePoints = normalizeRoutePointsToLonLat(rawPts);
       const truckParams = window.__TT_TRUCK_PARAMS || {};
       framesSvc.updateFramesForRoute(normalizedRoutePoints, truckParams);
     } catch (e) {
@@ -693,7 +771,7 @@ async function runDetourAttempt(frame, radiusMeters) {
 
   window.routes.viaPoints = [
     ...(detourState.originalViaPoints || []),
-    { request: via } // ✅ via в формате [lat, lon] для Яндекса
+    { request: via }
   ];
 
   await buildRouteWithState();
@@ -744,8 +822,7 @@ function snapshotRouteStatsMaybe(frame) {
   const activeRoute = multiRoute?.getActiveRoute?.();
   if (!activeRoute) return { framesCount: null, maxRisk: null, frameStillOnRoute: null };
 
-  const rawPts = collectRouteGeometryPoints(activeRoute);
-  const routeLonLat = normalizeRoutePointsToLonLat(rawPts);
+  const { points: routeLonLat } = getNormalizedRoutePoints(activeRoute);
   if (routeLonLat.length < 2) return { framesCount: null, maxRisk: null, frameStillOnRoute: null };
 
   const api = window.__TT_LAYERS;
@@ -784,8 +861,6 @@ function snapshotRouteStatsMaybe(frame) {
 
 /* ------------------------------------------------------
    ✅ computeViaPoint
-   - frame.coords у вас = [lon, lat]
-   - Яндекс ждёт via как [lat, lon]
 ------------------------------------------------------ */
 function computeViaPoint(frame, meters) {
   const lon = Number(frame?.coords?.[0]);
@@ -803,7 +878,6 @@ function computeViaPoint(frame, meters) {
   const dx = dir.dx * dLon;
   const dy = dir.dy * dLat;
 
-  // ✅ Yandex expects [lat, lon]
   return [lat + dy, lon + dx];
 }
 
@@ -813,8 +887,76 @@ function stableDirFromId(id) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   const k = h % 4;
 
-  if (k === 0) return { dx: 1, dy: 0 };  // восток
-  if (k === 1) return { dx: -1, dy: 0 }; // запад
-  if (k === 2) return { dx: 0, dy: 1 };  // север
-  return { dx: 0, dy: -1 };              // юг
+  if (k === 0) return { dx: 1, dy: 0 };
+  if (k === 1) return { dx: -1, dy: 0 };
+  if (k === 2) return { dx: 0, dy: 1 };
+  return { dx: 0, dy: -1 };
+}
+
+/* ------------------------------------------------------
+   ✅ EXPORT TO NAVIGATOR
+------------------------------------------------------ */
+export function exportActiveRouteToNavigator() {
+  if (!hasWindow) return;
+
+  const activeRoute = multiRoute?.getActiveRoute?.();
+  if (!activeRoute) {
+    toast?.('Сначала постройте маршрут');
+    return;
+  }
+
+  const wayPoints = activeRoute.getWayPoints?.();
+  const points = [];
+
+  try {
+    if (wayPoints && typeof wayPoints.each === 'function') {
+      wayPoints.each((wp) => {
+        try {
+          const c = wp?.properties?.get?.('coordinates');
+          if (Array.isArray(c) && c.length >= 2) points.push(c);
+        } catch {}
+      });
+    }
+  } catch {}
+
+  if (points.length < 2) {
+    const { points: normPts } = getNormalizedRoutePoints(activeRoute);
+    if (normPts.length >= 2) {
+      points.push(normPts[0]);
+      points.push(normPts[normPts.length - 1]);
+    }
+  }
+
+  if (points.length < 2) {
+    toast?.('Нет координат для экспорта');
+    return;
+  }
+
+  const order = activeRoute[ROUTE_ORDER_KEY] || decideRouteOrder(points);
+  const normPoints = normalizeRouteWithOrder(points, order);
+
+  const start = normPoints[0];
+  const finish = normPoints[normPoints.length - 1];
+
+  const via = Array.isArray(window.routes?.viaPoints) ? window.routes.viaPoints : [];
+  const viaCoordsRaw = via
+    .map((v) => {
+      if (Array.isArray(v?.request)) return v.request;
+      if (Array.isArray(v)) return v;
+      return null;
+    })
+    .filter(Boolean);
+
+  const viaNorm = viaCoordsRaw.length ? normalizeRouteWithOrder(viaCoordsRaw, order) : [];
+
+  const params = new URLSearchParams();
+  params.set('from', `${start[1]},${start[0]}`);
+  params.set('to', `${finish[1]},${finish[0]}`);
+  if (viaNorm.length) {
+    params.set('via', viaNorm.map((p) => `${p[1]},${p[0]}`).join('|'));
+  }
+  params.set('app_promo', 'map');
+
+  const url = `https://yandex.ru/navi/?${params.toString()}`;
+  window.open(url, '_blank');
 }
